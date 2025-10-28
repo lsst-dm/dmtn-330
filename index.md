@@ -5,7 +5,11 @@ Describes the infrastructure supporting the end-user prompt data products Butler
 ```
 
 ## System Overview
-![System Diagram](system_diagram.png)
+```{figure} system_diagram.png
+:figclass: technote-wide-content
+
+System diagram
+```
 
 (lifecycle)=
 ## Lifecycle of Prompt Processing Outputs
@@ -41,6 +45,9 @@ Most of the work in the publication process would be handled by a new service: t
 PPS will maintain a database tracking the state of each dataset as it moves
 through its lifetime.  Conceptually, the state will look something like the
 following:
+
+```{rst-class} technote-wide-content
+```
 
 | Dataset ID                           | Dataset Type            | Exposure Time   | embargo status | prompt_prep status | repo_main status | Google status | Google publication time |
 | ------------------------------------ | ----------------------- | --------------- | -------------- | ------------------ | ---------------- | ------------- | ----------------------- |
