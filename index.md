@@ -68,7 +68,7 @@ The [transfer_embargo](https://github.com/lsst-dm/transfer_embargo) repository
 contains scripts that are currently used to move raws and other outputs from
 the `embargo` repository to other repositories at USDF.  However, these scripts
 do not track any state about which files have been transferred (other than
-implicitly in each Butler database.) This will make it difficult to reliably
+implicitly in each Butler database.) That will make it difficult to reliably
 implement the full lifecycle of these data products across multiple
 repositories.  It will also be easier to reason about concurrency with a single
 instance of a service, rather than individual scripts being started as cron
@@ -77,9 +77,8 @@ jobs that may overlap.
 (lifecycle)=
 ## Lifecycle of Prompt Processing Outputs
 
-The following is the rough sequence of tasks that needs to occur for Prompt
-Processing outputs to be published for end users, and eventually deleted to
-reclaim space.
+The following is the rough sequence of tasks for publication of Prompt
+Processing outputs to end users.
 
 Prompt processing pods:
 
@@ -95,17 +94,17 @@ Prompt Processing Butler Writer
 Prompt Publication Service:
 
 6. Read list of datasets to unembargo from Kafka
-7. Copy files and metadata from `embargo` to `prompt_prep` Butler repository
+7. After 80 hours, copy files and metadata from `embargo` to `prompt_prep` Butler repository
 8. Copy metadata from `prompt_prep` to `/repo/main` Butler repository
 9. Delete datasets from `embargo` Butler repository
 10. Copy metadata from `prompt_prep` to end-user `prompt` repository at Google
-11. Mark datasets as expired in end-user `prompt` repository at Google
+11. After dataset lifetime elapsed, mark datasets as expired in end-user `prompt` repository at Google
 12. Delete files from `prompt_prep` Butler repository
 13. Delete files from `/repo/main` Butler repository
 
 The Prompt Publication Service may end up doing additional work that is not
 listed here -- for example notifying other systems that data has been
-unembargoed and is available for publication.
+unembargoed and is available for further processing/publication.
 
 ### Batched vs incremental release of datasets
 
@@ -276,9 +275,9 @@ expected to be a common occurence, but may be required for ad-hoc modifications
 Although many datasets will be deleted from disk after 30 days, we need to
 retain a record of all the datasets that have ever been available in the Butler
 repository.  This allows users to look up the dataset ID and other information
-needed to re-create them.  The following collection structure would allow users
-to distinguish datasets that are available for download from those that have
-been deleted:
+needed to re-create the dataset.  The following collection structure would
+allow users to distinguish datasets that are available for download from those
+that have been deleted:
 
 ```
 Prompt/All                        CHAINED
