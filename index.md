@@ -113,12 +113,12 @@ It has been suggested that prompt data products should be released in a batch on
 rather than being incrementally delivered as they come out of the embargo period.  Doing
 a once-a-day release would have some downsides for datasets delivered by the Butler:
 
-1. It concentrates requests for downloading new files at a single point in time,
-rather than spreading it out over many hours.
+1. It concentrates downloads of new files at a single point in time, rather
+than spreading it out over many hours.
 2. It may require us to modify the Butler database schema to introduce a concept
 of "published" vs "unpublished" datasets, so that we can incrementally load the
 database but release publicly at the scheduled time. (We initially plan on
-releasing approximately 3 million datasets per day -- larger than DP1,
+releasing approximately 3 million datasets per day. That is larger than DP1,
 which took 30-60 minutes to load into the databases at Google in a single
 database transaction.)
 3. It complicates the implementation of the publication service by requiring it
