@@ -35,9 +35,7 @@ for delivery to end users, and expire them when they are no longer needed.
 Butler server at Google Cloud will serve a Butler repository to end users.
 The Butler database for this repository will be hosted in AlloyDB in the
 cloud.  The artifact files will be hosted at USDF in Weka, and served to
-end users via the Weka S3 gateway.  The Butler server signs URLs to grant users
-access to files in S3.
-
+end users via the Weka S3 gateway.
 
 ### Files that will be published
 
@@ -53,7 +51,8 @@ that are not Prompt Processing outputs:
 
 Raws will eventually be integrated into the Prompt Publication Service, but
 they have a slightly different lifecycle (originating outside of Prompt
-Processing, and being retained forever.)  They are not discussed in detail here.
+Processing, getting combined into zip files upon unembargo and being retained
+forever.)  They are not discussed in detail here.
 
 Calibrations and ancillaries are currently updated on an ad-hoc basis by the
 calibration team.  The calibration team has scripts that are used to
@@ -67,41 +66,80 @@ tech note.
 
 The [transfer_embargo](https://github.com/lsst-dm/transfer_embargo) repository 
 contains scripts that are currently used to move raws and other outputs from
-the `embargo` repository to other repositories at USDF.  However, do not
-track any state about which files have been transferred (other than by querying
-the Butler database).  This will make it difficult to reliably implement the
-full lifecycle of these data products across multiple repositories.
+the `embargo` repository to other repositories at USDF.  However, these scripts
+do not track any state about which files have been transferred (other than
+implicitly in each Butler database.) This will make it difficult to reliably
+implement the full lifecycle of these data products across multiple
+repositories.  It will also be easier to reason about concurrency with a single
+instance of a service, rather than individual scripts being started as cron
+jobs that may overlap.
 
 (lifecycle)=
 ## Lifecycle of Prompt Processing Outputs
+
+The following is the rough sequence of tasks that needs to occur for Prompt
+Processing outputs to be published for end users, and eventually deleted to
+reclaim space.
 
 Prompt processing pods:
 
 1. Generate outputs in a local Butler repository
 2. Copy files to central `embargo` Butler repository S3
-3. Write file metadata to Kafka for consumption by writer service
+3. Write dataset metadata to Kafka for consumption by writer service
 
 Prompt Processing Butler Writer
 
-4. Read file metadata from Kafka and write it to central `embargo` Butler repository Postgres
+4. Read dataset metadata from Kafka and write it to central `embargo` Butler repository Postgres
 5. Write list of output datasets to Kafka for consumption by publication service
 
 Prompt Publication Service:
 
 6. Read list of datasets to unembargo from Kafka
 7. Copy files and metadata from `embargo` to `prompt_prep` Butler repository
-8. Copy metadata from `embargo` to `/repo/main` Butler repository (files shared with `prompt_prep`)
+8. Copy metadata from `prompt_prep` to `/repo/main` Butler repository
 9. Delete datasets from `embargo` Butler repository
 10. Copy metadata from `prompt_prep` to end-user `prompt` repository at Google
 11. Mark datasets as expired in end-user `prompt` repository at Google
 12. Delete files from `prompt_prep` Butler repository
 13. Delete files from `/repo/main` Butler repository
 
+The Prompt Publication Service may end up doing additional work that is not
+listed here -- for example notifying other systems that data has been
+unembargoed and is available for publication.
+
 ### Batched vs incremental release of datasets
+
+It has been suggested that prompt data products should be released in a batch once a day,
+rather than being incrementally delivered as they come out of the embargo period.  Doing
+a once-a-day release would have some downsides for datasets delivered by the Butler:
+
+1. It concentrates requests for downloading new files at a single point in time,
+rather than spreading it out over many hours.
+2. It may require us to modify the Butler database schema to introduce a concept
+of "published" vs "unpublished" datasets, so that we can incrementally load the
+database but release publicly at the scheduled time. (We initially plan on
+releasing approximately 3 million datasets per day -- larger than DP1,
+which took 30-60 minutes to load into the databases at Google in a single
+database transaction.)
+3. It complicates the implementation of the publication service by requiring it
+to handle a large number of datasets in a single group, instead of small
+chunks.
+
+An incremental release will increase the number of times users hit the Butler
+server or other search services to query for new datasets.  We
+could mitigate this issue by providing a way for users to be notified of
+newly-released datasets.  For example, we could provide webhooks, or lists of 
+datasets in static files that they can poll via HTTP.
+
+While either batch or incremental release of datasets could be made to work,
+incremental release will take less work to implement and is likely to be more
+reliable because it spreads out the work over time.
 
 ## Prompt Publication Service
 
-Most of the work in the publication process would be handled by a new service: the Prompt Publication Service ("PPS").
+Most of the work in the publication process will be handled by a new service:
+the Prompt Publication Service ("PPS").  This service will run in Kubernetes at
+USDF.
 
 ### State Database
 
@@ -126,17 +164,14 @@ message received from the Prompt Processing Butler Writer on the
 `prompt-output` topic.  Kafka's transactions can be used to guarantee
 at-least-once processing of these messages.
 
-After a task runs to completion, the database is updated with the new state. 
-The underlying Butler methods can be made idempotent, so we only need to record
-completion of tasks and do not need to persist an "in progress" state in the
-database.  In the event of a crash, the service can pick up where it left off
-without any special retry logic.
-
-### Task logic
+### Tasks
 
 Each of the steps described in [Lifecycle of Prompt Processing
 Outputs](#lifecycle) above will be handled as an independent task within the
-service.  The general structure of each task is simple:
+service.  The only connection between tasks is via the data persisted in the
+state database.
+
+The general structure of each task is simple:
 
 1. Query the state database to identify datasets ready for the task
 2. Execute code to transfer/delete/etc datasets
@@ -149,6 +184,12 @@ The actual work of Step #2 may be fanned out across multiple workers,
 but there will be a single central service that is responsible for enqueueing
 work and collecting results from the workers.
 
+After a task runs to completion, the database is updated with the new state. 
+The underlying Butler methods can be made idempotent, so we only need to record
+completion of tasks and do not need to persist an "in progress" state in the
+database.  In the event of a crash, the service can pick up where it left off
+without any special retry logic.
+
 ### User Interface
 A small web app will be written for displaying service status and running
 administrative commands.  The Data Curation team will be monitoring and
@@ -157,16 +198,87 @@ hands-off and fully automatic, but unusual situations may arise that need
 manual intervention.  The web app will be developed in response to the needs of
 Data Curation as we gain experience with this process.
 
-## `prompt` Butler Repository
+## Butler repositories containing Prompt Data Products
+
+Prompt Data Products originate in the `embargo` Butler repository, hosted in
+the embargo rack at USDF.  However, they remain there only until their 80-hour
+embargo period has expired, at which point they move to other repositories and
+are deleted from `embargo` to reclaim storage space.
+
+There are four Butler repositories that will contain unembargoed data:
+1. `/repo/main`, the primary repository at USDF for Rubin-internal end users.
+2. `prompt_prep`, a repository at USDF for managing data prior to publication.
+This is intended for use by publication tooling and the data curation team --
+general users should not access `prompt_prep`.
+3. `prompt` repository at Google `idfprod`, the production deployment of the
+Rubin Science Platform.  
+4. `prompt` repository at Google `idfint`, the testing environment for the
+Rubin Science Platform.
+
+Having a separate integration test repository at Google allows us to test
+configuration and infrastructure changes without impacting external users.
+
+### Storage of artifact files
+
+All four of the USDF post-embargo repositories share a single copy of the
+artifact files.
+
+The primary destination for files after unembargo is the
+`prompt_prep` Butler repository, which stores its files in the `/sdf/data` Weka
+filesystem.
+
+`/repo/main` also uses the `/sdf/data` Weka, but it has its own repository root
+directory and references the files copied into `prompt_prep` using hard links.
+This allows it to share the files with no risk of a dangling reference if files
+are deleted from either repository.
+
+The two Google `prompt` repositories access the files from the `prompt_prep`
+directory using the Weka S3 gateway.  The Butler server signs URLs to grant
+end users access to S3.  This requires some care in managing the lifetime of
+these files -- they must always be loaded into `prompt_prep` before Google
+`prompt`, and removed from Google `prompt` before being deleted from
+`prompt_prep`.  `prompt_prep` exists primarily to serve as a staging area for
+serving these files to `prompt` end users via S3.
+
+Datasets of type `raw` are handled slightly differently.  They have a separate
+storage location in `/sdf/data`, outside the root of any Butler repository.
+They are ingested into the Butler in `direct` mode, which means they they are
+considered external datasets with a lifetime managed outside of the Butler.
+There is a separate S3 bucket for serving `raw` datasets to end users.
+
+There is an additional complication with serving `raw` datasets to users at
+Google.  Multiple `raw` images are combined into zip files for storage at USDF,
+with a single zip containing all 188 detectors for an exposure.  However,
+services like `datalinker` and the Portal expect to be able to reference each
+image via HTTP as a separate file.  We will develop and deploy a microservice
+to provide an HTTP endpoint for on-the-fly extraction of a single image from a
+zip.
+
+### Butler databases
+
+Postgres databases for `/repo/main` and `prompt_prep` are hosted at USDF.
+
+Each Google `prompt` repository has an
+[AlloyDB](https://cloud.google.com/products/alloydb) database hosted at Google,
+close to the Butler server instances that serve data from them.  A deployment of the
+[AlloyDB Auth Proxy](https://docs.cloud.google.com/alloydb/docs/auth-proxy/overview)
+at USDF will allow publication tooling and the data curation team to access these
+databases remotely from inside USDF.
+
+Butler configurations `prompt_google_prod` and `prompt_google_int` will be
+provided at USDF to allow the data curation team to manage these Butler
+repositories the same way they manage USDF-internal repositories.  This is not
+expected to be a common occurence, but may be required for ad-hoc modifications
+(e.g. to fix incorrect exposure metadata.)
 
 ### Butler Collection Structure
 
 Although many datasets will be deleted from disk after 30 days, we need to
-retain a record of all the datasets that have existed in the Butler repository.
-This allows users to look up the dataset ID and other information needed to
-re-create them.  The following collection structure would allow users to
-distinguish datasets that are available for download from those that have been
-deleted:
+retain a record of all the datasets that have ever been available in the Butler
+repository.  This allows users to look up the dataset ID and other information
+needed to re-create them.  The following collection structure would allow users
+to distinguish datasets that are available for download from those that have
+been deleted:
 
 ```
 Prompt/All                        CHAINED
@@ -178,8 +290,8 @@ Prompt/All                        CHAINED
     Prompt/Outputs/Expired        TAGGED
 ```
 
-PPS would manage the `Prompt/Outputs/Available` and `Prompt/Outputs/Expired`
-tagged collections as part of the publication process.
+Prompt Publication Service would manage the `Prompt/Outputs/Available` and
+`Prompt/Outputs/Expired` tagged collections as part of the publication process.
 
 Most tutorials and common use cases would point to `Prompt/Available` as the
 default top-level collection.
