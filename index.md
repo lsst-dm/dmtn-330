@@ -14,9 +14,9 @@ outputs. Items shown with a dotted border are not currently deployed.
 System diagram
 ```
 
-Prompt Processing outputs originate inside Prompt Processing worker pods in the
-embargo rack.  The workers transfer the outputs to a central Ceph S3 file
-store.  The workers then send a Kafka message to notify the [Prompt Processing
+Prompt Processing outputs originate inside Prompt Processing worker pods.  The
+workers transfer the outputs to a central Ceph S3 file store in the embargo
+rack.  The workers then send a Kafka message to notify the [Prompt Processing
 Butler Writer](https://dmtn-310.lsst.io/) service that the datasets are
 available for ingestion.  The Prompt Processing Butler Writer batches up the
 messages from the workers, then inserts records for the datasets into the
@@ -40,7 +40,8 @@ end users via the Weka S3 gateway.
 ### Files that will be published
 
 An initial list of Butler dataset types that will be published is currently
-being tracked [in Confluence](https://rubinobs.atlassian.net/wiki/spaces/DM/pages/1000767506/Draft+prompt+product+types).
+being tracked [in Confluence](https://rubinobs.atlassian.net/wiki/spaces/DM/pages/1000767506/Draft+prompt+product+types)
+and is being finalized in [RFC-1134](https://rubinobs.atlassian.net/browse/RFC-1134).
 
 Most of the items on that list are outputs of Prompt Processing, and this tech
 note is primarily concerned with those.  There are two major types of dataset
@@ -216,6 +217,11 @@ Rubin Science Platform.
 
 Having a separate integration test repository at Google allows us to test
 configuration and infrastructure changes without impacting external users.
+
+There may eventually be a `prompt` repo at USDF, mirroring the structure of the
+Google ones.  This would be used by external users with a User Batch
+allocation, because they will not be permitted to access the `/repo/main`
+repository used by Rubin staff.
 
 ### Storage of artifact files
 
