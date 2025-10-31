@@ -96,7 +96,7 @@ Prompt Publication Service:
 
 6. Read list of datasets to unembargo from Kafka
 7. After 80 hours, copy files and metadata from `embargo` to `prompt_prep` Butler repository
-8. Copy metadata from `prompt_prep` to `/repo/main` Butler repository
+8. Copy metadata and make hardlinks from `prompt_prep` to `/repo/main` Butler repository
 9. Delete datasets from `embargo` Butler repository
 10. Copy metadata from `prompt_prep` to end-user `prompt` repository at Google
 11. After dataset lifetime elapsed, mark datasets as expired in end-user `prompt` repository at Google
@@ -163,6 +163,13 @@ The insertion of new datasets into this database is triggered by a Kafka
 message received from the Prompt Processing Butler Writer on the
 `prompt-output` topic.  Kafka's transactions can be used to guarantee
 at-least-once processing of these messages.
+
+Besides Kafka notifications, we can also accept lists of datasets from other
+sources.  For example, Prompt Processing "catch up" processing will run
+separately from the main set of worker pods, at a different time.  As long as
+it can provide a list of the datasets it generated, we can integrate it with
+PPS.  This could be as simple as a CSV dump in a directory that we poll for
+files periodically.
 
 ### Tasks
 
@@ -253,7 +260,7 @@ There is a separate S3 bucket for serving `raw` datasets to end users.
 
 There is an additional complication with serving `raw` datasets to users at
 Google.  Multiple `raw` images are combined into zip files for storage at USDF,
-with a single zip containing all 188 detectors for an exposure.  However,
+with a single zip containing all detectors for an exposure.  However,
 services like `datalinker` and the Portal expect to be able to reference each
 image via HTTP as a separate file.  We will develop and deploy a microservice
 to provide an HTTP endpoint for on-the-fly extraction of a single image from a
@@ -280,10 +287,10 @@ expected to be a common occurence, but may be required for ad-hoc modifications
 
 Although many datasets will be deleted from disk after 30 days, we need to
 retain a record of all the datasets that have ever been available in the Butler
-repository.  This allows users to look up the dataset ID and other information
-needed to re-create the dataset.  The following collection structure would
-allow users to distinguish datasets that are available for download from those
-that have been deleted:
+repository.  This allows users to look up the dataset ID, provenance graphs,
+and other information needed to re-create the dataset.  The following
+collection structure would allow users to distinguish datasets that are
+available for download from those that have been deleted:
 
 ```
 Prompt/All                        CHAINED
